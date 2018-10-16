@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+#
+# Check sophos license
+#
+# @author  Dominic Kleiner <kleiner@gyselroth.com>
+# @license MIT, gyselroth GmbH 2018
+#
+# Requirements:
+#  * Python3
+
+
+from __future__ import print_function
+import configparser
+from datetime import datetime
+import requests
+import base64
+from optparse import OptionParser
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
+protocol = "https://"
+path = "/api/nodes/licensing.license"
+
+parser = OptionParser()
+parser.add_option("-w", "--warning", dest="warning", default="30", type="int", help="days for warning")
+parser.add_option("-c", "--critical", dest="critical", default="15", type="int", help="days for critical")
+parser.add_option("-H", "--hostname", dest="hostname", default="localhost", type="str", help="hostname")
+parser.add_option("-p", "--port", dest="port", default="4444", type="str", help="port")
+parser.add_option("-u", "--username", dest="username", default="admin", type="str", help="username")
+parser.add_option("-s", "--secret", dest="secret", default="admin", type="str", help="password")
+parser.add_option("-V", "--verify", action="store_false", dest="verify", default="true", help="verify")
+parser.add_option("-t", "--timeout", dest="timeout", default="15", type="int", help="timeout in seconds")
+parser.add_option("-a", "--accesstoken", dest="accesstoken", type="str", help="accesstoken")
+
+(options, args) = parser.parse_args()
+
+def checkExpired(section, expirationDate):
+    today = datetime.today()
+    if expirationDate == 'Never':
+        print(section, "never expires", end=", ")
+        return 0
+    else:
+        date = datetime.strptime(expirationDate, '%m/%d/%Y')  # formatting from string to date
+        expiration = date - today
+
+        if expiration.days <= -1:
+            print(section, "critical! License expired", abs(expiration.days), "days ago on",
+                  datetime.strftime(date, '%d.%m.%Y'), end=", ")  # formatting from date back to string
+            return 2
+        elif expiration.days <= options.critical:
+            print(section, "critical! License will expire in", expiration.days, "days on",
+                  datetime.strftime(date, '%d.%m.%Y'), end=", ")
+            return 2
+        elif expiration.days <= options.warning:
+            print(section, "warning! License will expire in", expiration.days, "days on",
+                  datetime.strftime(date, '%d.%m.%Y'), end=", ")
+            return 1
+        elif options.warning < expiration.days:
+            print(section, "expires in", expiration.days, "days on", datetime.strftime(date, '%d.%m.%Y'), end=", ")
+            return 0
+
+if options.accesstoken:
+    token = 'token:' + options.accesstoken
+    tokenencoded = base64.b64encode(token.encode('ascii'))
+    header = 'Basic ' + tokenencoded.decode('UTF-8')
+else:
+    usernamepassword = options.username + ':' + options.secret
+    usernamepasswordencoded = base64.b64encode(usernamepassword.encode('ascii'))
+    header = 'Basic ' + usernamepasswordencoded.decode('UTF-8')
+
+request = requests.get(protocol + options.hostname + ':' + options.port + path,
+                       headers={'Accept': 'application/json', 'Authorization': header},
+                       verify=options.verify)
+
+if request.status_code != 200:
+    print("http request ended with error "+request.text)
+    exit(2)
+
+data = request.json()
+
+config = configparser.ConfigParser(allow_no_value=True)
+config.read_string(data.rpartition('SHA1')[2].rpartition('-----BEGIN')[0])
+
+exitCode = 0
+exitCodeCandidate = 0
+
+for key in config:
+    if 'expirationdate' in config[key]:
+        exitCodeCandidate = checkExpired(key, config[key]['expirationdate'])
+    elif 'stop' in config[key]:
+        exitCodeCandidate = checkExpired(key, config[key]['stop'])
+
+    if exitCodeCandidate > exitCode:
+        exitCode = exitCodeCandidate
+
+exit(exitCode)
