@@ -6,7 +6,7 @@ Monitor the expiry of services licensed for sophos firewalls.
 
 ### Usage
 
-    Usage: check_mongo_connector [options]
+    Usage: check_sophos_license [options]
 
     Options:
       -h,               --help                      show this help message and exit
